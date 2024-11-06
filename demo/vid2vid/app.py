@@ -2,13 +2,13 @@ import gradio as gr
 
 import os
 import sys
+import random
 from typing import Literal, Dict, Optional
 
-import fire
 import torch
 from torchvision.io import read_video, write_video
 from tqdm import tqdm
-
+from fractions import Fraction
 sys.path.append(os.path.join(os.path.dirname(__file__), "..", ".."))
 
 from utils.wrapper import StreamDiffusionWrapper
@@ -18,16 +18,21 @@ CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
 
 def main(
     input: str,
+    prompt: str = "",
+    negative_prompt: str = "",
+    seed: int = 2,
+    num_inference_steps: int = 50,
     output: str = os.path.join(CURRENT_DIR, "..", "..", "images", "outputs", "output.mp4"),
     model_id: str = "KBlueLeaf/kohaku-v2.1",
     lora_dict: Optional[Dict[str, float]] = None,
-    prompt: str = "1girl with brown dog ears, thick frame glasses",
     scale: float = 1.0,
     acceleration: Literal["none", "xformers", "tensorrt"] = "xformers",
     use_denoising_batch: bool = True,
     enable_similar_image_filter: bool = True,
-    seed: int = 2,
 ):
+
+    if seed == -1:
+        seed = random.randint(1, 10000)
 
     """
     Process for generating images based on a prompt using a specified model.
@@ -85,7 +90,8 @@ def main(
 
     stream.prepare(
         prompt=prompt,
-        num_inference_steps=50,
+        negative_prompt=negative_prompt,
+        num_inference_steps=num_inference_steps,
     )
 
     o = stream(video[0].permute(2, 0, 1))
@@ -102,13 +108,30 @@ def main(
 
     video_result = video_result * 255
 
-    write_video(output, video_result[2:], fps=fps)
+    fps_fraction = Fraction(fps).limit_denominator()
+    write_video(output, video_result[2:], fps=fps_fraction)
     return output
 
+css = """
+    .input-video video {
+    height: 70vh; !Important
+}
+"""
 
-demo = gr.Interface(
-    main,
-    gr.Video(sources=['upload', 'webcam']), 
-    "playable_video"
-)
+with gr.Blocks(css=css) as demo:
+    with gr.Row(equal_height=True):
+        with gr.Column():
+            input_video = gr.Video(sources=['upload', 'webcam'], elem_classes="input-video")
+            prompt = gr.Textbox(label="Prompt", scale=0, value="1girl with cat ears, detailed, high quality, masterpiece, 8k, intricate, cinematic")
+            neg_prompt = gr.Textbox(label="Negative Prompt", scale=0, value="black and white, blurry, low resolution, pixelated, pixel art, low quality, low fidelity")
+        with gr.Column():     
+            output_video = gr.Video("playable_video", elem_classes="input-video")
+            with gr.Row():
+                with gr.Column():
+                    in_seed = gr.Slider(-1, 10000, value=-1, step=1, scale=0, label="Seed")
+                    with gr.Row():
+                        generate_btn = gr.Button(value="Generate")
+    
+        generate_btn.click(fn=main, inputs=[input_video, prompt, neg_prompt, in_seed], outputs=[output_video])
+
 demo.launch()
